@@ -1,60 +1,120 @@
 const fs = require('fs');
-const jsonData = require('out/bom.json'); 
+const path = require('path');
 
 main();
 
-var repolinks = [];
-var repos = [];
+var error = false;
 
 async function main() {
+    let rawdata = fs.readFileSync(path.join("out", "bom.json"));
+    let jsonData = JSON.parse(rawdata);
+
     const packageData = {
         name: jsonData["components"]["name"],
         json: jsonData["components"],
         hasLicense: false,
-        hasCopyright: false
+        hasExternalRefs: false
     };
-    parseJSON(packageData);
-    downloadLicenseInformation(packageData);
+    for (let x in packageData.json) {
+        let package = packageData.json[x];
+        if (!hasLicense(package)) {
+            //TODO log packages without license
+            continue;
+        }
+        if (!hasExternalRefs(package)) {
+            //TODO log packages without external refs
+            continue;
+        }
+
+        let copyright = retrieveCopyrightInformation(package);
+        if (copyright !== "") {
+            insertCopyrightInformation(package, copyright);
+        }
+        await Sleep(1000);       
+    }
+    //downloadLicenseInformation(packageData);
 }
 
-function parseJSON(packageData) {    
-    for (let x in packageData.json) {
-        const package = packageData.json[x];
-        // Check if cdxgen found license and repo link
-        if (package["licenses"] !== [] && typeof package["externalReferences"] !== 'undefined') {
-            checkForCopyright(package);
+function Sleep(milliseconds) {
+    return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
+function insertCopyrightInformation(package, copyright) {
+    //TODO Add functionality to insert copyright into pom.json
+}
+
+function extractCopyright(packageData) {
+    //TODO Add extraction functionality
+}
+
+function hasLicense(package) {
+    // Check if cdxgen found license
+    return package["licenses"] !== []
+}
+
+function hasExternalRefs(package) {
+    // Check if any external resources exist
+    return typeof package["externalReferences"] !== 'undefined';
+}
+
+
+async function retrieveCopyrightInformation(package) {
+    const extRefs = package["externalReferences"];
+    let license = "";
+    let copyright = "";
+    for (let y in extRefs) {
+        type = extRefs[y]["type"];
+        url = extRefs[y]["url"];
+        if (url.includes("github.com")) {
+            license = await downloadLicenseFromGithub(url);
+        } else {
+            license = await downloadLicenseFromExternalWebsite(url);
+        }
+        // try {
+        //     fs.writeFileSync(path.join("outlicenses", `${package.name}${y}.txt`), license);
+        // } catch (err) {
+        //     console.error(err);
+        // }
+        copyright = extractCopyright(license);
+        if (copyright !== "") {
+            return copyright;
         }
     }
-    
-    // response = await makeGetRequest(url);
-    // console.log(response);
-    // if (response === undefined) {
-    //     console.log(url);
-    // }
-   writeReposToFile(repos);
+    handleNoCopyrightFound(package);
+    return "";
 }
 
-function checkForCopyright(package) {
-    package.hasLicense = true;
-    const extRefs = package["externalReferences"];  
-    for (let y in extRefs) {
-        if (!package.hasCopyright) {
-            type = extRefs[y]["type"]
-            url = extRefs[y]["url"]
-            if (url.includes("github.com")) {
-                getCopyrightFromGithub(url);
-            } else {                
-                // try to download other website and search for copyright notice
-                getCopyrightFromExternalWebsite(url);
+function handleNoCopyrightFound(package) {
+    //TODO handle no copyright found
+}
+
+async function downloadLicenseFromGithub(url) {
+    let reponame = filterRepoFromURL(url)
+    //repos.push(reponame);            
+    apilink = createAPILink(reponame);
+    try {
+        let resp = await makeGetRequest(apilink);
+        for (let i = 0; i < resp["total_count"]; i++) {
+            currentResult = resp["items"][i];
+            resultName = currentResult["name"].toLowerCase();
+            //TODO filter for actual license files only
+            if (resultName.includes("license")) {
+                let downloadInfo = await makeGetRequest(currentResult["url"]);
+                let licenseFile = await makeGetRequest(downloadInfo["download_url"]);
+                return licenseFile;
+                //extractCopyright(licenseFile);
+                //download: url -> extract downloadurl -> download Document -> extract copyright notice
             }
         }
+    } catch (err) {
+        console.error(err);
+        console.log(apilink);
     }
+
 }
 
-function getCopyrightFromGithub(url) {
-    let reponame = filterRepoFromURL(url)
-    repos.push(reponame);            
-    repolinks.push(createAPILink(reponame));
+function downloadLicenseFromExternalWebsite(url) {
+    //TODO try to download other website and search for copyright notice
 }
 
 function filterRepoFromURL(url) {
@@ -66,7 +126,7 @@ function filterRepoFromURL(url) {
 }
 
 function createAPILink(repo) {
-   return `https://api.github.com/search/code?q=license+repo:${repo}`;
+    return `https://api.github.com/search/code?q=license+repo:${repo}`;
 }
 
 function makeGetRequest(path) {
@@ -78,7 +138,7 @@ function makeGetRequest(path) {
                 console.log('Processing Request');
                 resolve(result);
             },
-                (error) => {
+            (error) => {
                 reject(error);
             }
         );
@@ -86,9 +146,17 @@ function makeGetRequest(path) {
 }
 
 function writeReposToFile(repos) {
-    var file = fs.createWriteStream('repos.txt');
+    var file = fs.createWriteStream('out/repos.txt');
     repos.forEach((v) => {
-        file.write(v+"\n");
-      });
+        file.write(v + "\n");
+    });
+    file.end();
+}
+
+function writeRespToFile(repos) {
+    var file = fs.createWriteStream('out/resp.json');
+    repos.forEach((v) => {
+        file.write(v + "\n");
+    });
     file.end();
 }
